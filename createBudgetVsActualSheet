@@ -1,0 +1,175 @@
+/**
+ * Main function to create the budget vs actual sheet.
+ */
+function createBudgetVsActualSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  
+  const campaignData = fetchDataFromSheet('GOOGLE CAMPAIGN BUDGETS');
+  const spendData = fetchDataFromSheet('GOOGLE CAMPAIGN SPEND');
+  const spendMapping = createSpendMapping(spendData);
+  
+  const relevantCampaigns = filterRelevantCampaigns(campaignData);
+  
+  const outputData = buildOutputData(relevantCampaigns, spendMapping);
+  
+  writeToSheet(outputData, 'budget_vs_actual');
+}
+
+/**
+ * Fetches data from the specified sheet.
+ */
+function fetchDataFromSheet(sheetName) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
+  return sheet.getDataRange().getValues();
+}
+
+/**
+ * Creates a mapping of spend data by date and campaign.
+ * @param {Array} spendData - The raw spend data.
+ * @returns {Object} - The spend mapping.
+ */
+function createSpendMapping(spendData) {
+  const mapping = {};
+  spendData.slice(1).forEach(row => {
+    const date = Utilities.formatDate(new Date(row[3]), "GMT", "yyyy-MM-dd");
+    const campaign = row[4];
+    const spend = parseFloat(row[5]);
+
+    if (!mapping[date]) mapping[date] = {};
+    if (!mapping[date][campaign]) mapping[date][campaign] = 0;
+
+    mapping[date][campaign] += spend;
+  });
+  return mapping;
+}
+
+/**
+ * Filters campaigns relevant for the last three months.
+ * @param {Array} campaignData - The raw campaign data.
+ * @returns {Array} - The filtered campaigns.
+ */
+function filterRelevantCampaigns(campaignData) {
+  const today = new Date();
+  const relevantDates = [
+  new Date(today.getFullYear(), today.getMonth()), 
+  new Date(today.getFullYear(), today.getMonth() - 1), 
+  new Date(today.getFullYear(), today.getMonth() - 2),
+  new Date(today.getFullYear(), today.getMonth() - 3), 
+  new Date(today.getFullYear(), today.getMonth() - 4), 
+  new Date(today.getFullYear(), today.getMonth() - 5), 
+  new Date(today.getFullYear(), today.getMonth() - 6), 
+  new Date(today.getFullYear(), today.getMonth() - 7), 
+  new Date(today.getFullYear(), today.getMonth() - 8)
+];
+
+  return campaignData.slice(1).filter(row => {
+    const rowDate = new Date(row[3]);
+    return relevantDates.some(d => d.getMonth() === rowDate.getMonth() && d.getFullYear() === rowDate.getFullYear());
+  });
+}
+
+/**
+ * Builds the output data array.
+ * @param {Array} relevantCampaigns - The campaigns relevant for the last three months.
+ * @param {Object} spendMapping - The spend data mapping.
+ * @returns {Array} - The output data.
+ */
+/**
+ * Builds the output data array.
+ * @param {Array} relevantCampaigns - The campaigns relevant for the last three months.
+ * @param {Object} spendMapping - The spend data mapping.
+ * @returns {Array} - The output data.
+ */
+function buildOutputData(relevantCampaigns, spendMapping) {
+  const output = [['date', 'Campaign / Program', 'Monthly Spend To Date', 'Daily Spend', 'actual_rt_eod', 'Budget (dynamic)', 'Daily Underspend (Overspend)', 'Budget (simple)', 'underspend_crude', 'Monthly Budget']];
+  
+  const today = new Date();
+  for (let i = 0; i < 9; i++) {
+    const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() - i + 1, 0);
+    const daysInMonth = (lastDayOfMonth - firstDayOfMonth) / (24 * 60 * 60 * 1000) + 1;
+    
+    for (let j = 0; j < daysInMonth; j++) {
+      const currentDate = new Date(firstDayOfMonth.getTime() + j * 24 * 60 * 60 * 1000);
+      const formattedDate = Utilities.formatDate(currentDate, "GMT", "yyyy-MM-dd");
+      
+      const campaignsForCurrentMonth = relevantCampaigns.filter(row => {
+        const rowDate = new Date(row[3]);
+        return rowDate.getMonth() === currentDate.getMonth() && rowDate.getFullYear() === currentDate.getFullYear();
+      });
+      
+      campaignsForCurrentMonth.forEach(row => {
+        // Extracted campaign and monthly budget
+        const campaign = row[1];
+        const monthlyBudget = parseFloat(row[4]);
+
+        // Calculate various metrics
+        const actualEod = getMonthlyRunningTotal(spendMapping, campaign, formattedDate, true);
+        const daysLeft = getDaysLeft(currentDate);
+        const budgetCrude = monthlyBudget / getDaysInMonth(currentDate);
+        const dailySpend = spendMapping[formattedDate] && spendMapping[formattedDate][campaign] || 0;
+        const underspendCrude = budgetCrude - dailySpend;
+
+        let budgetDynamic;
+        // Outside of the inner loop (right before it starts), calculate budgetDynamic for today:
+        const todayDynamicBudget = (monthlyBudget - getMonthlyRunningTotal(spendMapping, campaign, Utilities.formatDate(new Date(), "GMT", "yyyy-MM-dd"), true)) / getDaysLeft(new Date());
+
+        // Inside the inner loop:
+        if (formattedDate >= Utilities.formatDate(new Date(), "GMT", "yyyy-MM-dd")) {
+            budgetDynamic = todayDynamicBudget;
+        } else {
+            budgetDynamic = actualEod; // for past days, if you still want to display cumulative spend
+        }
+        
+        const underspendDynamic = budgetDynamic - dailySpend;
+
+        output.push([
+          formattedDate,
+          campaign,
+          getMonthlyRunningTotal(spendMapping, campaign, formattedDate, false),
+          dailySpend,
+          actualEod,
+          budgetDynamic,
+          underspendDynamic,
+          budgetCrude,
+          underspendCrude,
+          monthlyBudget
+        ]);
+      });
+    }
+  }
+
+  return output;
+}
+
+/**
+ * Writes the given data to the specified sheet.
+ * @param {Array} data - The data to write.
+ * @param {string} sheetName - The name of the sheet.
+ */
+function writeToSheet(data, sheetName) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName) || SpreadsheetApp.getActiveSpreadsheet().insertSheet(sheetName);
+  sheet.clear();
+  sheet.getRange(1, 1, data.length, data[0].length).setValues(data);
+}
+
+function getMonthlyRunningTotal(spendMapping, campaign, currentDate, includeCurrentDate) {
+  let total = 0;
+  const firstOfMonth = currentDate.split('-')[0] + '-' + currentDate.split('-')[1] + '-01';
+  for (let date in spendMapping) {
+    if (date.startsWith(currentDate.split('-')[0] + '-' + currentDate.split('-')[1]) && ((includeCurrentDate && date <= currentDate) || (!includeCurrentDate && date < currentDate))) {
+      if (spendMapping[date][campaign]) {
+        total += spendMapping[date][campaign];
+      }
+    }
+  }
+  return total;
+}
+
+function getDaysInMonth(date) {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+}
+
+function getDaysLeft(date) {
+  return getDaysInMonth(date) - date.getDate() + 1;
+}
