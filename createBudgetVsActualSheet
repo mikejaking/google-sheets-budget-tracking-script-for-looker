@@ -1,6 +1,11 @@
-/**
+/*
+ * Michael Acland King
+ * 01-10-2023
+ * Version 1
+ * JavaScript
+
  * The main purpose of this script is to create a 'budget vs actual' sheet in a Google Spreadsheet 
- * that compares campaign budgets to actual spending over the past three months.
+ * that compares campaign budgets to actual spending over a specified time.
  */
 
 /**
